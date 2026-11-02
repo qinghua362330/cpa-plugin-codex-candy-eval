@@ -3,10 +3,11 @@
 ## Delivery status
 
 - Upstream source: `haowang02/cpa-plugin-codex-candy-eval`, commit `179d6dae48a0f0a735637ea2f373345b91caaca8`.
-- Locally built for Linux/amd64 using Go 1.26.2 and Zig 0.15.2, glibc target 2.17.
+- Published for Linux/amd64 by GitHub Actions using the manylinux2014/glibc 2.17 baseline.
 - Artifact: `cpa-codex-candy-eval-v0.4.4-company.1.so`.
-- SHA256: `e57b9cbc90455f1b637f0edb7cdb2642546a04ba347bf0c2776dfb49114b2485`.
-- Not deployed. No production credentials, timers, or CPA configuration were changed.
+- Published SHA256: `359e472421fe326591403bfb98a25b42be87c43724d4421a94103ce5703d1e14`.
+- Release: [v0.4.4-company.1](https://github.com/qinghua362330/cpa-plugin-codex-candy-eval/releases/tag/v0.4.4-company.1), source commit `0096943`.
+- Production hotload verified on 2026-11-02 without restarting CPA. Previous library and configuration retained for rollback. No credential or automation policy was changed.
 - Both scheduled inspection and automatic disabling default to off. No default model is silently selected.
 
 ## Verification
@@ -15,7 +16,7 @@ Passed `go vet ./...`, `go test -race ./... -count=1`, `node scripts/test-ui.cjs
 
 Tests cover the real timer firing and rearming, serialized execution, cancellation, reload persistence, complete/incomplete verdicts, model aliases, stale credential identity and revision, storage failures, narrow status PATCH, response verification, secret redaction, loopback restrictions, redirect rejection, and disabled proxy use.
 
-No live model evaluation, live credential disabling, or Linux host loading smoke test has been run with this custom build. Local integration tests use mock host callbacks and loopback HTTP test servers. Stored management configuration readiness does not prove a live management connection.
+Linux ABI loading passed both in CI and in an isolated directory on the target host. Production confirmed the new UI/version and a successful model-list health check after hotload. No live model evaluation or live credential disabling was performed. The policy/disable integration tests use mock host callbacks and loopback HTTP test servers. Stored management configuration readiness does not prove a live management connection.
 
 ## Installation boundary
 
