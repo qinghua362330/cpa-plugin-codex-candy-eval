@@ -132,10 +132,10 @@ func fingerprintRunResponse(body []byte) managementResponse {
 		func(ctx context.Context, auth credential, p *progress) { runFingerprint(ctx, auth, req, p) })
 }
 
-func runFingerprint(ctx context.Context, auth credential, req fingerprintRunRequest, p *progress) {
+func runFingerprint(ctx context.Context, auth credential, req fingerprintRunRequest, p *progress) (r fingerprintRecord) {
 	started := time.Now()
 	done := 0
-	r := fingerprintRecord{record: newRecord(req.Model, started), DetectorRevision: detectorRevision, Concurrency: req.Concurrency}
+	r = fingerprintRecord{record: newRecord(req.Model, started), DetectorRevision: detectorRevision, Concurrency: req.Concurrency}
 	r.Status = "completed"
 	defer func() {
 		if ctx.Err() != nil && done < fingerprintTarget {
@@ -215,6 +215,7 @@ func runFingerprint(ctx context.Context, auth credential, req fingerprintRunRequ
 	default:
 		r.Status, r.Error = "failed", err.Error()
 	}
+	return r
 }
 
 // collectFingerprintSample asks challenge until an answer can be scored. The sample keeps the last answer.

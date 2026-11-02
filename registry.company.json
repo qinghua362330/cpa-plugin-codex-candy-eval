@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "plugins": [
+    {
+      "id": "cpa-codex-candy-eval",
+      "name": "Codex 降智测试 · 自动巡检",
+      "description": "Upstream Codex fingerprint evaluation with scheduled inspection and optional credential disabling.",
+      "author": "haowang02; company extension by qinghua362330",
+      "repository": "https://github.com/qinghua362330/cpa-plugin-codex-candy-eval",
+      "homepage": "https://github.com/qinghua362330/cpa-plugin-codex-candy-eval",
+      "license": "MIT",
+      "tags": ["Management", "Codex", "Evaluation"]
+    }
+  ]
+}

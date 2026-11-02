@@ -16,7 +16,7 @@ import (
 
 const (
 	pluginID      = "cpa-codex-candy-eval"
-	pluginVersion = "0.4.4"
+	pluginVersion = "0.4.4-company.1"
 	ABIVersion    = 1
 	// rpcSchemaVersion is the version of CPA's plugin RPC contract, not of the state file.
 	rpcSchemaVersion = 6
@@ -76,7 +76,7 @@ var fingerprintScript string
 var pelicanScript string
 
 var uiHTML = func() []byte {
-	config, _ := json.Marshal(map[string]any{"requests": fingerprintTarget, "aliases": fingerprintAliases})
+	config, _ := json.Marshal(map[string]any{"requests": fingerprintTarget, "aliases": fingerprintAliases, "models": sharedDetector.ModelIDs})
 	fingerprint := strings.Replace(fingerprintScript, `/*FINGERPRINT_CONFIG*/{}`, string(config), 1)
 	variants, _ := json.Marshal(pelicanVariants)
 	pelican := strings.Replace(pelicanScript, `/*PELICAN_VARIANTS*/[]`, string(variants), 1)
@@ -145,10 +145,12 @@ func HandleMethod(method string, request []byte) (response []byte) {
 	switch method {
 	case "plugin.register", "plugin.reconfigure":
 		loadState()
+		loadAutomation()
 		mu.Lock()
 		if runCtx.Err() != nil {
 			runCtx, stopRuns = context.WithCancel(context.Background())
 		}
+		scheduleAutomationLocked()
 		mu.Unlock()
 		return okEnvelope(map[string]any{
 			"schema_version": rpcSchemaVersion,
@@ -156,7 +158,7 @@ func HandleMethod(method string, request []byte) (response []byte) {
 				"Name":             pluginID,
 				"Version":          pluginVersion,
 				"Author":           "haowang02",
-				"GitHubRepository": "https://github.com/haowang02/cpa-plugin-codex-candy-eval",
+				"GitHubRepository": "https://github.com/qinghua362330/cpa-plugin-codex-candy-eval",
 				"Logo":             "data:image/svg+xml;base64," + base64.StdEncoding.EncodeToString([]byte(logoSVG)),
 				"ConfigFields":     []any{},
 			},
@@ -202,6 +204,12 @@ var routes = func() []route {
 		return func(managementRequest) managementResponse { return clearRecordsResponse(test) }
 	}
 	return []route{
+		{http.MethodGet, "/automation/management", "View local status-control readiness", func(managementRequest) managementResponse { return managementStatusResponse() }},
+		{http.MethodPut, "/automation/management", "Configure local CPA status control", withBody(updateAutomationManagement)},
+		{http.MethodGet, "/automation", "View automatic fingerprint inspection", func(managementRequest) managementResponse { return automationResponse() }},
+		{http.MethodPut, "/automation", "Save automatic fingerprint inspection policy", withBody(updateAutomation)},
+		{http.MethodPost, "/automation/run", "Run automatic inspection once", func(managementRequest) managementResponse { return runAutomationResponse() }},
+		{http.MethodPost, "/automation/cancel", "Cancel current automatic inspection", func(managementRequest) managementResponse { return cancelAutomationResponse() }},
 		{http.MethodPost, "/credentials/sync", "Sync configured credential identities", withBody(syncCredentialsResponse)},
 		{http.MethodGet, "/state", "View credentials with their test records", func(managementRequest) managementResponse { return stateResponse() }},
 		{http.MethodPost, "/cancel", "Stop the tests running on credentials", withBody(cancelResponse)},
@@ -285,12 +293,19 @@ func summaries[T interface{ summary() T }](list []T) []T {
 }
 
 func Quiesce() {
+	automationActionMu.Lock()
 	mu.Lock()
+	if automationTimer != nil {
+		automationTimer.Stop()
+		automationTimer = nil
+	}
+	automationGeneration++
 	stopRuns()
 	for _, p := range running {
 		p.Cancelling = true
 	}
 	mu.Unlock()
+	automationActionMu.Unlock()
 	tasks.Wait()
 }
 

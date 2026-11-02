@@ -30,7 +30,7 @@ function element(id) {
   return elements.get(id);
 }
 const context = vm.createContext({
-  TextEncoder, TextDecoder, Uint8Array, Uint32Array, DataView, atob, console, AbortController, AbortSignal, URLSearchParams,
+  TextEncoder, TextDecoder, Uint8Array, Uint32Array, DataView, atob, console, AbortController, AbortSignal, URL, URLSearchParams,
   location: { host: 'cpa.test' }, navigator: { userAgent: 'test-agent' },
   addEventListener() {},
   Date: class extends Date { static now() { return now; } },
@@ -46,7 +46,7 @@ const context = vm.createContext({
 });
 let source = ['vendor/markdown-it.min.js', 'vendor/markdown-it-cjk-friendly.min.js', 'vendor/texmath.js', 'vendor/temml.min.js', 'credentials.js', 'catalog.js', 'components.js', 'candy.js', 'fingerprint.js', 'pelican.js', 'app.js']
   .map(file => webFile(file).split('// Events and initialization.')[0]).join('\n');
-source = source.replace('/*FINGERPRINT_CONFIG*/{}', JSON.stringify({requests:3,aliases:{'gpt-6.1-sol':'gpt-6-astra'}}));
+source = source.replace('/*FINGERPRINT_CONFIG*/{}', JSON.stringify({requests:3,aliases:{'gpt-6.1-sol':'gpt-6-astra'},models:['gpt-6-astra','test-model','other-model']}));
 source = source.replace('/*PELICAN_VARIANTS*/[]', JSON.stringify([{id:'original',label:'原版',prompt:'p'},{id:'all-in-one',label:'多合一版',prompt:'q'}]));
 vm.runInContext(source, context);
 const run = code => vm.runInContext(code, context);
@@ -56,6 +56,8 @@ const visible = () => plain(run(`visibleCredentials().map(a => a.id)`));
 const stableID = (kind, parts) => kind + ':' + crypto.createHash('sha256').update(kind + parts.map(x => '\0' + (x || '').trim()).join('')).digest('hex').slice(0, 12);
 
 (async () => {
+  run(`const automationFixture = {config:{enabled:false,model:'',interval_minutes:30,auto_disable:false,credential_ids:[]},running:false,next_run:null,last_started:null,last_finished:null,last_error:'',events:[]}`);
+  run(`const managementFixture = {base_url:'http://127.0.0.1:8317',ready:false}`);
   let finishAPI;
   context.fetch = () => new Promise(resolve => { finishAPI = resolve; });
   run(`key='old-login'`);
@@ -469,6 +471,8 @@ const stableID = (kind, parts) => kind + ':' + crypto.createHash('sha256').updat
   run(`var statusServer = ${JSON.stringify(validState)}, statusCalls = [];
     api = async (path, options = {}) => {
       if (path.endsWith('/state')) return JSON.parse(JSON.stringify(statusServer));
+      if (path.endsWith('/automation/management')) return managementFixture;
+      if (path.endsWith('/automation')) return automationFixture;
       statusCalls.push([path, options.method, options.body]);
       if (!options.body.disabled) throw new Error('Denied');
       statusServer.credentials[0].disabled = true;
@@ -481,7 +485,7 @@ const stableID = (kind, parts) => kind + ':' + crypto.createHash('sha256').updat
   await run(`setCredentialEnabled('valid-state', true)`);
   assert.equal(run(`credentials[0].disabled`), true, 'a rejected change must reload the CPA state');
   assert(element('flash .notice-message').textContent.includes('启用凭证失败：Denied'));
-  run(`let finishStatus; api = (path) => path.endsWith('/state') ? Promise.resolve(JSON.parse(JSON.stringify(statusServer)))
+  run(`let finishStatus; api = (path) => path.endsWith('/automation/management') ? Promise.resolve(managementFixture) : path.endsWith('/automation') ? Promise.resolve(automationFixture) : path.endsWith('/state') ? Promise.resolve(JSON.parse(JSON.stringify(statusServer)))
     : new Promise(resolve => { finishStatus = () => { statusServer.credentials[0].disabled = false; resolve({status:'ok'}); }; })`);
   const enabling = run(`setCredentialEnabled('valid-state', true)`);
   assert.equal(run(`pending`), false, 'switching one credential must not lock the page');
@@ -499,5 +503,157 @@ const stableID = (kind, parts) => kind + ':' + crypto.createHash('sha256').updat
   assert.equal(element('app').hidden, true);
   assert.equal(element('login-error').textContent, 'Expired');
   assert(!element('fingerprint-rows').innerHTML.includes('data-fingerprint-run'));
-  console.log('UI checks passed: identities, filters, plans, enable switches, catalog recovery, fingerprint detection results and controls, refresh, login reset, notices, metrics.');
+  run(`initializeAutomation(); acceptAutomation(automationFixture); renderAutomation(); catalogCache.models = {ids:['test-model','other-model']}; fillModels()`);
+  assert.equal(element('automation-model').value, '', 'automation must never inherit the test default model');
+  assert.equal(element('automation-enabled').checked, false);
+  assert.equal(element('automation-interval').value, '30');
+  assert.equal(element('automation-run').disabled, true);
+  assert(element('automation-status').innerHTML.includes('—'), 'null dates must not become epoch dates');
+  element('automation-model').value = 'test-model';
+  element('automation-interval').value = '42';
+  element('automation-form').listeners.input();
+  run(`acceptAutomation({...automationFixture,running:true}); renderAutomation(); fillModels()`);
+  assert.equal(element('automation-model').value, 'test-model');
+  assert.equal(element('automation-interval').value, '42', 'polling must preserve an unsaved draft');
+  assert.equal(element('automation-cancel').disabled, false);
+  assert.equal(element('automation-run').disabled, true);
+  for (const interval of ['', '0', '10081', '1.5', 'Infinity']) {
+    element('automation-interval').value = interval;
+    assert.throws(() => run(`automationConfig()`), /1 到 10080/);
+  }
+  for (const interval of ['1', '10080']) {
+    element('automation-interval').value = interval;
+    assert.equal(run(`automationConfig().interval_minutes`), Number(interval));
+  }
+  element('automation-interval').value = '30';
+  run(`credentials = [
+    {id:'codex-file',source:'auth_files',provider:'codex'},
+    {id:'config-key',source:'ai_providers',provider:'codex'},
+    {id:'other-file',source:'auth_files',provider:'claude'},
+    {id:'disabled-file',source:'auth_files',provider:'codex',disabled:true}
+  ]; fingerprintSelected.clear(); credentials.forEach(a => fingerprintSelected.add(a.id)); pickAutomationCredentials()`);
+  assert.deepEqual(plain(run(`automationConfig().credential_ids`)), ['codex-file']);
+  run(`fingerprintSelected.clear(); pickAutomationCredentials()`);
+  assert.throws(() => run(`automationConfig()`), /Codex/, 'empty picked scope must never broaden to all');
+  element('automation-scope').value = 'all';
+  assert.deepEqual(plain(run(`automationConfig().credential_ids`)), []);
+  element('automation-enabled').checked = true;
+  element('automation-model').value = '';
+  assert.throws(() => run(`automationConfig()`), /请选择/);
+  element('automation-enabled').checked = false;
+  element('automation-model').value = 'test-model';
+  run(`credentials=[]; let automationCalls = []; api = async (path, options) => {
+    automationCalls.push([path, options.method, options.body]);
+    return {...automationFixture, config: options.body || {...automationFixture.config,model:'test-model'}, running:path.endsWith('/run')};
+  }`);
+  await run(`changeAutomation('save')`);
+  assert.deepEqual(plain(run(`automationCalls[0]`)), [run(`BASE`) + '/automation', 'PUT', {enabled:false,model:'test-model',interval_minutes:30,auto_disable:false,credential_ids:[]}]);
+  assert.equal(run(`automationDirty`), false);
+  await run(`changeAutomation('run')`);
+  assert.equal(run(`automationStatus.running`), true);
+  assert.equal(run(`automationStatus.config.enabled`), false, 'manual runs must not enable the scheduler');
+  await run(`changeAutomation('cancel')`);
+  assert.equal(run(`automationCalls[2][0]`), run(`BASE`) + '/automation/cancel');
+  assert.equal(run(`automationCalls[2][1]`), 'POST');
+  element('automation-interval').value = '55';
+  element('automation-form').listeners.input();
+  run(`api = async () => {throw new Error('Save rejected')}`);
+  await run(`changeAutomation('save')`);
+  assert.equal(run(`automationDirty`), true);
+  assert.equal(element('automation-interval').value, '55');
+  assert(element('flash .notice-message').textContent.includes('Save rejected'));
+  const unsafe = '<img src=x onerror=alert(1)>';
+  run(`const syntheticHiddenFixture='not-for-rendering'; automationDirty=false; acceptAutomation({...automationFixture,events:['match','mismatch','inconclusive','disabled','disable_failed','skipped','__proto__'].map(status => ({time:null,credential_id:${JSON.stringify(unsafe)},model:${JSON.stringify(unsafe)},prediction:${JSON.stringify(unsafe)},probability:0.75,status,message:${JSON.stringify(unsafe)},secret:syntheticHiddenFixture}))}); renderAutomation()`);
+  const results = element('automation-results').innerHTML;
+  assert(!results.includes('<img'));
+  assert(results.includes('&lt;img'));
+  assert(!results.includes('not-for-rendering'));
+  for (const label of ['匹配','不匹配','无法判定','已停用','停用失败','已跳过','未知状态','75.0%']) assert(results.includes(label));
+  run(`credentials=[]; api=async path => path.endsWith('/automation') ? {...automationFixture,running:true} : {credentials:[]}; refreshCatalog=async()=>{}`);
+  await run(`load()`);
+  assert.equal(run(`automationStatus.running`), true, 'load must fetch automation status');
+  assert.equal(noticeTimers.get(run(`pollTimer`)).delay, 2500, 'active automation uses fast polling');
+  run(`api=async path => {if(path.endsWith('/automation')) throw new Error('Unavailable'); return {credentials:[]}}`);
+  await run(`load()`);
+  assert(element('automation-error').textContent.includes('Unavailable'));
+  assert.equal(element('automation-run').disabled, true);
+  run(`showLogin('Expired')`);
+  assert.equal(run(`automationStatus`), null);
+  assert.equal(run(`automationDirty`), false);
+  assert(!element('automation-results').innerHTML.includes('&lt;img'));
+  run(`acceptAutomationManagement({base_url:'',ready:false}); renderAutomation()`);
+  assert.equal(element('automation-auto-disable').disabled, true);
+  assert.equal(element('automation-management-status').textContent, '未配置');
+  assert.equal(element('automation-management-url').value, 'http://127.0.0.1:8317');
+  run(`catalogCache.models = {ids:['gpt-6.1-sol','vendor/gpt-6-astra','openai/gpt-6.1-sol','unsupported','gpt-6.1-sol(high)']}; fillModels()`);
+  assert(element('automation-model').innerHTML.includes('vendor/gpt-6-astra'));
+  assert(element('automation-model').innerHTML.includes('openai/gpt-6.1-sol'), 'provider-prefixed aliases resolve to supported reference IDs');
+  assert(!element('automation-model').innerHTML.includes('unsupported'));
+  assert(!element('automation-model').innerHTML.includes('(high)'));
+  assert(element('fingerprint-model').innerHTML.includes('unsupported'), 'manual fingerprint model choices remain unfiltered by the reference set');
+  element('automation-model').value = 'unsupported';
+  assert.throws(() => run(`automationConfig()`), /参考库/, 'observe-only automation also rejects unsupported models');
+  element('automation-model').value = '';
+  element('automation-auto-disable').checked = true;
+  assert.throws(() => run(`automationConfig()`), /请选择/);
+  element('automation-model').value = 'gpt-6.1-sol';
+  assert.throws(() => run(`automationConfig()`), /管理连接/);
+  run(`acceptAutomationManagement({...managementFixture,ready:true}); renderAutomation()`);
+  assert.equal(element('automation-auto-disable').disabled, false);
+  assert.equal(element('automation-management-status').textContent, '已配置');
+  assert.equal(run(`automationConfig().auto_disable`), true);
+  for (const origin of ['http://localhost:8317','http://192.168.1.1','http://127.1','http://2130706433','http://127.0.0.1/x','http://127.0.0.1?x=1','http://127.0.0.1#x','http://user:pass@127.0.0.1','http://127.0.0.1:0','http://127.0.0.1:65536','http://127.0.0.256','http://127.00.0.1','ftp://127.0.0.1']) {
+    assert.throws(() => run(`automationManagementOrigin(${JSON.stringify(origin)})`), /数字回环/);
+  }
+  assert.equal(run(`automationManagementOrigin(' http://127.0.0.1:8317/ ')`), 'http://127.0.0.1:8317');
+  assert.equal(run(`automationManagementOrigin('http://[::1]:8317')`), 'http://[::1]:8317');
+  element('automation-management-url').value = 'http://127.0.0.1:9000';
+  element('automation-management-key').value = 'synthetic-management-secret';
+  element('automation-management-form').listeners.input();
+  run(`const syntheticReturnedFixture='must-not-retain'; acceptAutomationManagement({...managementFixture,ready:true,api_key:syntheticReturnedFixture}); renderAutomation()`);
+  assert.equal(element('automation-management-url').value, 'http://127.0.0.1:9000', 'polling preserves connection drafts');
+  assert.equal(element('automation-management-key').value, 'synthetic-management-secret');
+  assert(!JSON.stringify(plain(run(`automationManagement`))).includes('must-not-retain'));
+  run(`let managementCalls=[]; api=async (path,options)=>{managementCalls.push([path,options.method,{...options.body}]);return {base_url:options.body.base_url,ready:true}}`);
+  await run(`saveAutomationManagement()`);
+  const syntheticManagementFixture = 'synthetic-management-secret';
+  assert.deepEqual(plain(run(`managementCalls[0]`)), [run(`BASE`)+'/automation/management','PUT',{base_url:'http://127.0.0.1:9000',api_key:syntheticManagementFixture}]);
+  assert.equal(element('automation-management-key').value, '');
+  assert.equal(run(`automationManagementDirty`), false);
+  assert(![...browserStorage.values()].join('').includes('synthetic-management-secret'));
+  assert(!JSON.stringify(plain(run(`automationManagement`))).includes('synthetic-management-secret'));
+  element('automation-management-form').listeners.input();
+  await run(`saveAutomationManagement()`);
+  assert.equal(run(`managementCalls[1][2].api_key`), '', 'empty key preserves existing same-origin secret');
+  run(`acceptAutomationManagement({base_url:'http://127.0.0.1:80',ready:true})`);
+  element('automation-management-form').listeners.input();
+  await run(`saveAutomationManagement()`);
+  assert.equal(run(`managementCalls[2][2].base_url`), 'http://127.0.0.1:80', 'preserving a key must retain the server origin spelling');
+  element('automation-management-url').value = 'http://127.0.0.1:9001';
+  element('automation-management-form').listeners.input();
+  await run(`saveAutomationManagement()`);
+  assert.equal(run(`managementCalls.length`), 3, 'a new origin requires a new key');
+  assert.equal(run(`automationManagementDirty`), true);
+  element('automation-management-key').value = 'synthetic-management-secret';
+  run(`api=async()=>{throw new Error('synthetic-management-secret')}`);
+  await run(`saveAutomationManagement()`);
+  assert.equal(element('automation-management-key').value, '');
+  assert(!element('flash .notice-message').textContent.includes('synthetic-management-secret'));
+  assert.equal(run(`automationManagementDirty`), true);
+  run(`api=async path=>path.endsWith('/automation/management') ? {...managementFixture,ready:true} : path.endsWith('/automation') ? automationFixture : {credentials:[]}`);
+  await run(`load()`);
+  assert.equal(run(`automationManagement.ready`), true);
+  assert.equal(element('automation-management-url').value, 'http://127.0.0.1:9001');
+  run(`api=async path=>{if(path.endsWith('/automation/management'))throw new Error('private response');return path.endsWith('/automation')?automationFixture:{credentials:[]}}`);
+  await run(`load()`);
+  assert.equal(element('automation-auto-disable').disabled, true, 'failed readiness refresh fails closed');
+  assert(!element('automation-management-error').textContent.includes('private response'));
+  element('automation-management-key').value = 'synthetic-management-secret';
+  run(`showLogin('Expired')`);
+  assert.equal(element('automation-management-key').value, '');
+  assert.equal(element('automation-management-url').value, 'http://127.0.0.1:8317');
+  assert.equal(run(`automationManagement`), null);
+  assert.equal(run(`automationManagementDirty`), false);
+  assert.deepEqual(plain(run(`TESTS`)), ['candy','fingerprint','pelican']);
+  console.log('UI checks passed: identities, filters, plans, enable switches, catalog recovery, fingerprint detection, automation controls, management connection and secret handling, reference model validation, polling, injection safety, refresh, login reset, notices, metrics.');
 })().catch(err => { console.error(err); process.exitCode = 1; });

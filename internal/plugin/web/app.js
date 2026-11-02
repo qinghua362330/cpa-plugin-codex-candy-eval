@@ -20,6 +20,186 @@ let refreshing = false;
 let pending = false;
 let storageError = "";
 let clearPath = "";
+let automationStatus = null;
+let automationDirty = false;
+let automationError = "";
+let automationScopeIDs = [];
+const AUTOMATION_MANAGEMENT_DEFAULT = "http://127.0.0.1:8317";
+let automationManagement = null;
+let automationManagementDirty = false;
+let automationManagementError = "";
+
+const automationManagementReady = () => !!automationManagement?.ready && !automationManagementError;
+const automationModelSupported = (model) => !/[()]/.test(model) &&
+  (FINGERPRINT_CONFIG.models || []).includes(fingerprintModelID(model));
+
+function automationManagementOrigin(value) {
+  const text = value.trim();
+  const match = /^https?:\/\/(127\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})|\[::1\])(?::(\d+))?\/?$/i.exec(text);
+  if (!match || match.slice(2, 5).some((part) => part !== undefined && (Number(part) > 255 || String(Number(part)) !== part)) ||
+    (match[5] && (Number(match[5]) < 1 || Number(match[5]) > 65535))) throw new Error("请输入数字回环地址的 HTTP(S) origin，不含路径、用户名或参数");
+  return new URL(text).origin;
+}
+
+function acceptAutomationManagement(data) {
+  if (typeof data?.base_url !== "string" || typeof data.ready !== "boolean") throw new Error("管理连接状态格式无效");
+  const base_url = data.base_url || AUTOMATION_MANAGEMENT_DEFAULT;
+  automationManagementOrigin(base_url);
+  // Only retain the public status contract, even if a server accidentally includes extra fields.
+  automationManagement = { base_url, ready: data.ready };
+  automationManagementError = "";
+  if (!automationManagementDirty) $("automation-management-url").value = base_url;
+}
+
+function renderAutomationManagement() {
+  $("automation-management-fields").disabled = pending;
+  $("automation-management-save").disabled = pending || !automationManagementDirty;
+  $("automation-management-dirty").hidden = !automationManagementDirty;
+  $("automation-management-status").textContent = automationManagementReady() ? "已配置" : "未配置";
+  $("automation-management-error").textContent = automationManagementError;
+  $("automation-management-error").hidden = !automationManagementError;
+}
+
+function saveAutomationManagement() {
+  if (pending) return;
+  return update("管理连接保存失败", async () => {
+    let base_url = automationManagementOrigin($("automation-management-url").value);
+    const api_key = $("automation-management-key").value;
+    if (!api_key && (!automationManagementReady() || base_url !== automationManagementOrigin(automationManagement.base_url))) {
+      throw new Error("新地址须填写管理密钥；仅同一地址可留空保留已存密钥");
+    }
+    if (!api_key) base_url = automationManagement.base_url;
+    const requestKey = key;
+    try {
+      let data;
+      try {
+        data = await api(BASE + "/automation/management", { method: "PUT", body: { base_url, api_key } });
+      } catch (err) {
+        if (err instanceof AuthError) throw err;
+        // Do not display server response bodies from a request carrying a secret.
+        throw new Error("请检查回环地址、管理密钥及服务端状态");
+      }
+      if (key !== requestKey) return;
+      acceptAutomationManagement(data);
+      automationManagementDirty = false;
+      $("automation-management-url").value = automationManagement.base_url;
+      setNotice("flash", "管理连接已保存", "info");
+    } finally {
+      $("automation-management-key").value = "";
+    }
+  });
+}
+
+function fillAutomationModels() {
+  const selected = $("automation-model").value;
+  const ids = [...new Set(catalogCache.models?.ids || [])].filter(automationModelSupported).sort(compareModels);
+  // Retain an unavailable saved/draft model without silently choosing a replacement.
+  const options = [["", "请选择模型"], ...ids.map((id) => [id, id])];
+  if (selected && !ids.includes(selected)) options.push([selected, selected + "（当前不可用）"]);
+  fillSelect("automation-model", options, selected, "");
+}
+
+function acceptAutomation(data) {
+  const c = data?.config;
+  if (!c || typeof c.enabled !== "boolean" || typeof c.auto_disable !== "boolean" || typeof c.model !== "string" ||
+    !Number.isInteger(c.interval_minutes) || c.interval_minutes < 1 || c.interval_minutes > 10080 ||
+    !Array.isArray(c.credential_ids) || c.credential_ids.some((id) => typeof id !== "string" || !id) ||
+    typeof data.running !== "boolean" || !Array.isArray(data.events)) throw new Error("巡检状态格式无效");
+  automationStatus = data;
+  automationError = "";
+  if (!automationDirty) {
+    automationScopeIDs = [...c.credential_ids];
+    $("automation-enabled").checked = c.enabled;
+    $("automation-auto-disable").checked = c.auto_disable;
+    $("automation-interval").value = String(c.interval_minutes);
+    $("automation-scope").value = c.credential_ids.length ? "picked" : "all";
+    // Add the saved value before assigning it to a real select element.
+    fillSelect("automation-model", [["", "请选择模型"], ...(c.model ? [[c.model, c.model]] : [])], c.model, "");
+    fillAutomationModels();
+  }
+}
+
+function pickAutomationCredentials() {
+  automationScopeIDs = credentials.filter((a) => a.source === "auth_files" && a.provider === "codex" &&
+    fingerprintSelected.has(a.id) && usableCredential(a)).map((a) => a.id);
+  $("automation-scope").value = "picked";
+  automationDirty = true;
+  renderAutomation();
+}
+
+function automationConfig() {
+  const config = {
+    enabled: $("automation-enabled").checked,
+    model: $("automation-model").value,
+    interval_minutes: Number($("automation-interval").value),
+    auto_disable: $("automation-auto-disable").checked,
+    credential_ids: $("automation-scope").value === "all" ? [] : [...automationScopeIDs],
+  };
+  if (!Number.isInteger(config.interval_minutes) || config.interval_minutes < 1 || config.interval_minutes > 10080) throw new Error("巡检间隔须为 1 到 10080 的整数");
+  if ((config.enabled || config.auto_disable) && !config.model) throw new Error("请选择巡检模型");
+  if (config.model && !automationModelSupported(config.model)) throw new Error("请选择指纹参考库支持的模型");
+  if (config.auto_disable && !automationManagementReady()) throw new Error("请先配置本地 CPA 管理连接");
+  if (config.model && !catalogCache.models?.ids.includes(config.model) && config.model !== automationStatus?.config.model) throw new Error("所选模型已不在模型列表中，请重新选择");
+  if ($("automation-scope").value === "picked" && !config.credential_ids.length) throw new Error("请勾选 Codex 认证文件并使用当前勾选");
+  return config;
+}
+
+function renderAutomation() {
+  const state = automationStatus;
+  renderAutomationManagement();
+  $("automation-auto-disable").disabled = pending || !automationManagementReady();
+  $("automation-fields").disabled = pending || !state;
+  $("automation-save").disabled = pending || !state || !automationDirty;
+  $("automation-run").disabled = pending || !state || !!automationError || state.running || automationDirty || !state.config.model ||
+    !automationModelSupported(state.config.model) || (state.config.auto_disable && !automationManagementReady());
+  $("automation-run").dataset.tip = automationDirty ? "请先保存配置" : !state?.config.model ? "请先选择并保存巡检模型" : "";
+  $("automation-cancel").disabled = pending || !state?.running;
+  $("automation-dirty").hidden = !automationDirty;
+  $("automation-count").textContent = $("automation-scope").value === "picked" ? `指定 ${automationScopeIDs.length} 个` : "全部已启用 Codex 认证文件";
+  const date = (value) => value ? fmtTime(value) : "—";
+  const fields = [["状态", !state ? "尚未读取" : state.running ? "巡检中" : state.config.enabled ? "等待定时巡检" : "定时巡检已关闭"],
+    ["下次巡检", date(state?.next_run)], ["上次开始", date(state?.last_started)], ["上次结束", date(state?.last_finished)]];
+  $("automation-status").innerHTML = fields.map(([label, value]) => `<div><dt>${label}</dt><dd>${esc(value)}</dd></div>`).join("");
+  const error = automationError || state?.last_error || "";
+  $("automation-error").textContent = error;
+  $("automation-error").hidden = !error;
+  const labels = { match: ["ok", "匹配"], mismatch: ["err", "不匹配"], inconclusive: ["skip", "无法判定"], disabled: ["err", "已停用"], disable_failed: ["bad", "停用失败"], skipped: ["skip", "已跳过"] };
+  $("automation-results").innerHTML = (state?.events || []).slice(-50).reverse().map((event) => {
+    if (!event || typeof event !== "object") return "";
+    const [tone, label] = Object.hasOwn(labels, event.status) ? labels[event.status] : ["skip", "未知状态"];
+    return `<article class="automation-event"><div>${statusPill(tone, label)}<div class="meta">${esc(date(event.time))}</div></div><div class="name mono">${esc(event.credential_id)}</div><div><span class="mono">${esc(event.model)} → ${esc(event.prediction || "—")}</span> · ${fmtPercent(event.probability)}</div>${event.message ? `<p>${esc(event.message)}</p>` : ""}</article>`;
+  }).join("") || '<p class="meta">暂无巡检结果</p>';
+}
+
+function changeAutomation(action) {
+  if (!automationStatus || pending) return;
+  if (action === "run" && (automationDirty || automationStatus.running || !automationStatus.config.model ||
+    !automationModelSupported(automationStatus.config.model) || (automationStatus.config.auto_disable && !automationManagementReady()))) return;
+  if (action === "cancel" && !automationStatus.running) return;
+  return update("巡检操作失败", async () => {
+    const body = action === "save" ? automationConfig() : undefined;
+    const data = await api(BASE + "/automation" + (action === "save" ? "" : "/" + action), { method: action === "save" ? "PUT" : "POST", body });
+    // Validate before clearing the draft; failed saves must remain editable.
+    acceptAutomation(data);
+    if (action === "save") { automationDirty = false; acceptAutomation(data); }
+    setNotice("flash", action === "save" ? "巡检配置已保存" : action === "run" ? "已开始本次巡检" : "已请求停止本次巡检", "info");
+  });
+}
+
+function initializeAutomation() {
+  $("automation-management-form").addEventListener("input", () => { automationManagementDirty = true; renderAutomationManagement(); });
+  $("automation-management-form").addEventListener("submit", (e) => { e.preventDefault(); saveAutomationManagement(); });
+  $("automation-form").addEventListener("input", () => { automationDirty = true; renderAutomation(); });
+  $("automation-scope").addEventListener("change", () => {
+    automationDirty = true;
+    if ($("automation-scope").value === "picked") pickAutomationCredentials();
+    else renderAutomation();
+  });
+  $("automation-pick").addEventListener("click", pickAutomationCredentials);
+  $("automation-form").addEventListener("submit", (e) => { e.preventDefault(); changeAutomation("save"); });
+  $("automation-run").addEventListener("click", () => changeAutomation("run"));
+  $("automation-cancel").addEventListener("click", () => changeAutomation("cancel"));
+}
 // Enable changes in flight, by credential ID; reloads keep these requested states.
 const switching = new Map();
 const credentialFilter = {
@@ -102,6 +282,7 @@ function savePreference(name, value) {
   store(VIEW_STORE + name, value);
 }
 function fillModels() {
+  fillAutomationModels();
   const ids = [...new Set(catalogCache.models?.ids || [])].sort(compareModels);
   const unsuffixed = ids.filter((id) => !/[()]/.test(id));
   for (const [id, models] of [["candy-model", ids], ["fingerprint-model", unsuffixed], ["pelican-model", ids]]) {
@@ -182,6 +363,7 @@ function render() {
   renderCredentialFilters();
   renderCandy();
   renderFingerprint();
+  renderAutomation();
   renderPelican();
 }
 
@@ -243,10 +425,32 @@ async function load({ refresh = false } = {}) {
     loadError = "读取测试记录失败：" + err.message;
     setNotice("load-error", loadError);
   } finally {
+    if (loadController === controller && !controller.signal.aborted) {
+      try {
+        const status = await api(BASE + "/automation/management", { signal: controller.signal });
+        if (!controller.signal.aborted) acceptAutomationManagement(status);
+      } catch (err) {
+        if (!controller.signal.aborted) {
+          if (err instanceof AuthError) showLogin(err.message);
+          else automationManagementError = "无法读取管理连接状态，请刷新重试";
+        }
+      }
+    }
+    if (loadController === controller && !controller.signal.aborted) {
+      try {
+        const status = await api(BASE + "/automation", { signal: controller.signal });
+        if (!controller.signal.aborted) acceptAutomation(status);
+      } catch (err) {
+        if (!controller.signal.aborted) {
+          if (err instanceof AuthError) showLogin(err.message);
+          else automationError = "读取巡检状态失败：" + err.message;
+        }
+      }
+    }
     if (loadController === controller) {
       loadController = null;
       render();
-      pollTimer = setTimeout(load, credentials.some(credentialBusy) ? 2500 : 20000);
+      pollTimer = setTimeout(load, automationStatus?.running || credentials.some(credentialBusy) ? 2500 : 20000);
     }
   }
 }
@@ -290,6 +494,19 @@ function showLogin(message) {
   try { sessionStorage.removeItem(KEY_STORE); } catch (_) {}
   resetCatalogCache();
   credentials = [];
+  automationStatus = null;
+  automationDirty = false;
+  automationError = "";
+  automationScopeIDs = [];
+  automationManagement = null;
+  automationManagementDirty = false;
+  automationManagementError = "";
+  $("automation-management-url").value = AUTOMATION_MANAGEMENT_DEFAULT;
+  $("automation-management-key").value = "";
+  $("automation-model").value = "";
+  $("automation-interval").value = "30";
+  $("automation-enabled").checked = $("automation-auto-disable").checked = false;
+  $("automation-scope").value = "all";
   loadError = storageError = "";
   for (const collection of [candySelected, fingerprintSelected, pelicanSelected, candyExpanded, fingerprintExpanded, pelicanExpanded, candyAnswersExpanded, pelicanPages]) collection.clear();
   for (const id of notices.keys()) setNotice(id, "");
@@ -463,6 +680,7 @@ initializeTips();
 initializeCopyButtons();
 initializeCandy();
 initializeFingerprint();
+initializeAutomation();
 initializePelican();
 document.querySelectorAll("[data-icon]").forEach((el) => { el.outerHTML = icon(el.dataset.icon, el.dataset.class); });
 

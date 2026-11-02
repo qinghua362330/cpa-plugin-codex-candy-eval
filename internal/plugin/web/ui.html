@@ -83,6 +83,39 @@
         </form>
         <div class="legend"><span id="fingerprint-cost"></span></div>
         <section id="fingerprint-credentials" class="card"></section>
+        <section class="automation" aria-labelledby="automation-title">
+          <div class="section-head"><h2 id="automation-title">自动巡检</h2><span id="automation-dirty" class="meta" hidden>未保存</span></div>
+          <form id="automation-management-form" autocomplete="off" aria-labelledby="automation-management-title">
+            <h3 id="automation-management-title">本地 CPA 管理连接</h3>
+            <fieldset id="automation-management-fields" class="automation-management-fields">
+              <label class="field"><span class="field-label">本机 CPA 地址</span><input id="automation-management-url" type="url" value="http://127.0.0.1:8317" autocomplete="off" spellcheck="false" required></label>
+              <label class="field"><span class="field-label">CPA 管理密钥</span><input id="automation-management-key" type="password" autocomplete="new-password" spellcheck="false" aria-describedby="automation-management-note"></label>
+            </fieldset>
+            <p id="automation-management-note" class="meta">密钥仅存于服务端权限 0600 的文件，不写入浏览器存储，也不由状态接口返回；仅用于本地 CPA 凭证状态 PATCH。同一地址留空保留已存密钥，更换地址须填写新密钥。</p>
+            <div class="automation-actions"><button id="automation-management-save" class="btn ghost" type="submit" disabled><i data-icon="check"></i>保存管理连接</button><span id="automation-management-status" class="meta" role="status">未配置</span><span id="automation-management-dirty" class="meta" hidden>未保存</span></div>
+            <p id="automation-management-error" class="detail-warning" role="alert" hidden></p>
+          </form>
+          <p class="detail-warning">指纹结果是统计推断，可能误判，不是模型身份的证明。自动停用会影响该凭证的所有模型。</p>
+          <form id="automation-form">
+            <fieldset id="automation-fields" class="automation-fields" disabled>
+              <label class="field"><span class="field-label">巡检模型</span><span class="native-select"><select id="automation-model"><option value="">请选择模型</option></select></span></label>
+              <label class="field"><span class="field-label">间隔（分钟）</span><input id="automation-interval" type="number" min="1" max="10080" step="1" value="30" required></label>
+              <label class="field"><span class="field-label">Codex 认证文件范围</span><span class="native-select"><select id="automation-scope"><option value="all">全部已启用</option><option value="picked">指定凭证</option></select></span></label>
+              <div class="automation-picked"><button id="automation-pick" class="btn ghost" type="button"><i data-icon="check"></i>使用当前勾选</button><span id="automation-count" class="meta"></span></div>
+              <label class="switch"><input id="automation-enabled" type="checkbox" role="switch"><span>启用定时巡检</span></label>
+              <label class="switch" data-tip="须先保存本地 CPA 管理连接"><input id="automation-auto-disable" type="checkbox" role="switch" disabled><span>不匹配时自动停用凭证</span></label>
+            </fieldset>
+            <div class="automation-actions">
+              <button id="automation-save" class="btn" type="submit" disabled><i data-icon="check"></i>保存配置</button>
+              <button id="automation-run" class="btn ghost" type="button" disabled><i data-icon="play"></i>立即巡检一次</button>
+              <button id="automation-cancel" class="btn ghost" type="button" disabled><i data-icon="circle-pause"></i>停止本次</button>
+            </div>
+          </form>
+          <dl id="automation-status" class="automation-status" aria-live="polite"></dl>
+          <p id="automation-error" class="detail-warning" role="alert" hidden></p>
+          <h3>最近巡检结果</h3>
+          <div id="automation-results"></div>
+        </section>
       </section>
       <section id="pelican-panel" role="tabpanel" aria-labelledby="tab-pelican" hidden>
         <div class="panel-intro">

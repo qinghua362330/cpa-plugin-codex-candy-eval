@@ -17,13 +17,19 @@ import (
 
 func setupTest(t *testing.T) {
 	t.Helper()
+	previousAutomation, previousAutomationLoaded, previousAutomationError := automation, automationLoaded, automationLoadError
+	previousGeneration := automationGeneration
 	previousCredentials := configuredCredentials
 	previousHost, previousPath, previousLoaded := hostCall, statePath, loaded
 	previousLoadError, previousStorageError := stateLoadError, storageError
 	previousRecords, previousRunning, previousInspections := records, running, inspections
 	previousRunCtx, previousStopRuns, previousRetryDelay := runCtx, stopRuns, retryDelay
 	t.Cleanup(func() {
+		Quiesce()
 		tasks.Wait()
+		automation, automationLoaded, automationLoadError = previousAutomation, previousAutomationLoaded, previousAutomationError
+		automationGeneration = previousGeneration
+		automationCancel = nil
 		configuredCredentials = previousCredentials
 		hostCall, statePath, loaded = previousHost, previousPath, previousLoaded
 		stateLoadError, storageError = previousLoadError, previousStorageError
@@ -31,6 +37,9 @@ func setupTest(t *testing.T) {
 		runCtx, stopRuns, retryDelay = previousRunCtx, previousStopRuns, previousRetryDelay
 	})
 	configuredCredentials = map[string]credential{}
+	automation, automationLoaded, automationLoadError = defaultAutomation(), false, nil
+	automationTimer, automationCancel = nil, nil
+	automationGeneration = 0
 	statePath, loaded = filepath.Join(t.TempDir(), "state.json"), false
 	stateLoadError, storageError = nil, ""
 	records, running, inspections = emptyState(), map[string]*progress{}, map[string]inspection{}

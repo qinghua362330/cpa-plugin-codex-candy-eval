@@ -27,10 +27,11 @@ type credential struct {
 	Priority     int    `json:"priority"`
 	Disabled     bool   `json:"disabled"`
 	// CPA marks enabled credentials unavailable while they cool down, e.g. after exhausting quota.
-	Unavailable    bool      `json:"unavailable,omitempty"`
-	StatusMessage  string    `json:"status_message,omitempty"`
-	NextRetryAfter time.Time `json:"next_retry_after,omitzero"`
-	AuthIndex      string    `json:"-"`
+	Unavailable        bool      `json:"unavailable,omitempty"`
+	StatusMessage      string    `json:"status_message,omitempty"`
+	NextRetryAfter     time.Time `json:"next_retry_after,omitzero"`
+	AuthIndex          string    `json:"-"`
+	AutomationRevision string    `json:"-"`
 }
 
 type hostAuthFile struct {
