@@ -16,7 +16,7 @@ import (
 
 const (
 	pluginID      = "cpa-codex-candy-eval"
-	pluginVersion = "0.4.4-company.1"
+	pluginVersion = "0.4.4-company.2"
 	ABIVersion    = 1
 	// rpcSchemaVersion is the version of CPA's plugin RPC contract, not of the state file.
 	rpcSchemaVersion = 6
@@ -146,12 +146,14 @@ func HandleMethod(method string, request []byte) (response []byte) {
 	case "plugin.register", "plugin.reconfigure":
 		loadState()
 		loadAutomation()
+		loadDegradationOutbox()
 		mu.Lock()
 		if runCtx.Err() != nil {
 			runCtx, stopRuns = context.WithCancel(context.Background())
 		}
 		scheduleAutomationLocked()
 		mu.Unlock()
+		startDegradationWorker()
 		return okEnvelope(map[string]any{
 			"schema_version": rpcSchemaVersion,
 			"metadata": map[string]any{
@@ -210,6 +212,10 @@ var routes = func() []route {
 		{http.MethodPut, "/automation", "Save automatic fingerprint inspection policy", withBody(updateAutomation)},
 		{http.MethodPost, "/automation/run", "Run automatic inspection once", func(managementRequest) managementResponse { return runAutomationResponse() }},
 		{http.MethodPost, "/automation/cancel", "Cancel current automatic inspection", func(managementRequest) managementResponse { return cancelAutomationResponse() }},
+		{http.MethodGet, "/degradation-webhook", "View degradation event webhook status", func(managementRequest) managementResponse { return degradationWebhookResponse() }},
+		{http.MethodPut, "/degradation-webhook", "Configure degradation event webhook", withBody(updateDegradationWebhook)},
+		{http.MethodGet, "/degradation-events", "View degradation event delivery history", func(managementRequest) managementResponse { return degradationEventsResponse() }},
+		{http.MethodPost, "/degradation-events/retry", "Retry a degradation event", withBody(retryDegradationEvent)},
 		{http.MethodPost, "/credentials/sync", "Sync configured credential identities", withBody(syncCredentialsResponse)},
 		{http.MethodGet, "/state", "View credentials with their test records", func(managementRequest) managementResponse { return stateResponse() }},
 		{http.MethodPost, "/cancel", "Stop the tests running on credentials", withBody(cancelResponse)},
@@ -293,6 +299,7 @@ func summaries[T interface{ summary() T }](list []T) []T {
 }
 
 func Quiesce() {
+	stopDegradationWorker()
 	automationActionMu.Lock()
 	mu.Lock()
 	if automationTimer != nil {

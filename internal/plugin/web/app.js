@@ -28,6 +28,10 @@ const AUTOMATION_MANAGEMENT_DEFAULT = "http://127.0.0.1:8317";
 let automationManagement = null;
 let automationManagementDirty = false;
 let automationManagementError = "";
+let degradationWebhook = null;
+let degradationWebhookDirty = false;
+let degradationWebhookError = "";
+let degradationEvents = [];
 
 const automationManagementReady = () => !!automationManagement?.ready && !automationManagementError;
 const automationModelSupported = (model) => !/[()]/.test(model) &&
@@ -199,6 +203,67 @@ function initializeAutomation() {
   $("automation-form").addEventListener("submit", (e) => { e.preventDefault(); changeAutomation("save"); });
   $("automation-run").addEventListener("click", () => changeAutomation("run"));
   $("automation-cancel").addEventListener("click", () => changeAutomation("cancel"));
+  $("degradation-webhook-form").addEventListener("input", () => { degradationWebhookDirty = true; renderDegradationWebhook(); });
+  $("degradation-webhook-form").addEventListener("submit", (e) => { e.preventDefault(); saveDegradationWebhook(); });
+  $("degradation-events").addEventListener("click", (e) => {
+    const eventID = e.target.closest("[data-degradation-retry]")?.dataset.degradationRetry;
+    if (eventID) retryDegradationEvent(eventID);
+  });
+}
+
+function acceptDegradationWebhook(data) {
+  if (!data || typeof data.enabled !== "boolean" || typeof data.endpoint !== "string" ||
+    !Number.isInteger(data.timeout_seconds) || typeof data.ready !== "boolean") throw new Error("事件连接状态格式无效");
+  degradationWebhook = { enabled: data.enabled, endpoint: data.endpoint, timeout_seconds: data.timeout_seconds, ready: data.ready };
+  degradationWebhookError = "";
+  if (!degradationWebhookDirty) {
+    $("degradation-webhook-enabled").checked = data.enabled;
+    $("degradation-webhook-endpoint").value = data.endpoint;
+    $("degradation-webhook-timeout").value = String(data.timeout_seconds || 10);
+  }
+}
+
+function renderDegradationWebhook() {
+  const state = degradationWebhook;
+  $("degradation-webhook-fields").disabled = pending;
+  $("degradation-webhook-save").disabled = pending || !degradationWebhookDirty;
+  $("degradation-webhook-dirty").hidden = !degradationWebhookDirty;
+  $("degradation-webhook-status").textContent = state?.ready ? "已启用" : state?.endpoint ? "已保存但未启用" : "未配置";
+  $("degradation-webhook-error").textContent = degradationWebhookError;
+  $("degradation-webhook-error").hidden = !degradationWebhookError;
+  const labels = { pending: ["skip", "待投递"], delivered: ["ok", "已送达"] };
+  $("degradation-events").innerHTML = degradationEvents.slice().reverse().map((event) => {
+    const [tone, label] = labels[event.state] || ["bad", "未知"];
+    const payload = event.payload || {};
+    const retry = event.state === "delivered" ? "" : `<button class="btn ghost" type="button" data-degradation-retry="${esc(payload.event_id || "")}">重试</button>`;
+    return `<article class="automation-event"><div>${statusPill(tone, label)}<div class="meta">尝试 ${Number(event.attempts || 0)} 次</div></div><div class="name mono">${esc(payload.credential_id || "—")}</div><div><span class="mono">${esc(payload.expected_model || "—")} → ${esc(payload.detected_model || "—")}</span>${event.last_error ? `<p>${esc(event.last_error)}</p>` : ""}${retry}</div></article>`;
+  }).join("") || '<p class="meta">暂无控制面事件</p>';
+}
+
+function saveDegradationWebhook() {
+  if (pending) return;
+  return update("事件连接保存失败", async () => {
+    const body = {
+      enabled: $("degradation-webhook-enabled").checked,
+      endpoint: $("degradation-webhook-endpoint").value.trim(),
+      secret: $("degradation-webhook-secret").value,
+      timeout_seconds: Number($("degradation-webhook-timeout").value),
+    };
+    try {
+      acceptDegradationWebhook(await api(BASE + "/degradation-webhook", { method: "PUT", body }));
+      degradationWebhookDirty = false;
+      setNotice("flash", "Team 控制面事件连接已保存", "info");
+    } finally {
+      $("degradation-webhook-secret").value = "";
+    }
+  });
+}
+
+function retryDegradationEvent(eventID) {
+  return update("事件重试失败", async () => {
+    await api(BASE + "/degradation-events/retry", { method: "POST", body: { event_id: eventID } });
+    setNotice("flash", "已安排重新投递", "info");
+  });
 }
 // Enable changes in flight, by credential ID; reloads keep these requested states.
 const switching = new Map();
@@ -364,6 +429,7 @@ function render() {
   renderCandy();
   renderFingerprint();
   renderAutomation();
+  renderDegradationWebhook();
   renderPelican();
 }
 
@@ -438,6 +504,22 @@ async function load({ refresh = false } = {}) {
     }
     if (loadController === controller && !controller.signal.aborted) {
       try {
+        const [webhook, events] = await Promise.all([
+          api(BASE + "/degradation-webhook", { signal: controller.signal }),
+          api(BASE + "/degradation-events", { signal: controller.signal }),
+        ]);
+        if (!controller.signal.aborted) {
+          acceptDegradationWebhook(webhook);
+          if (!Array.isArray(events.events)) throw new Error("事件历史格式无效");
+          degradationEvents = events.events;
+          degradationWebhookError = events.storage_error || "";
+        }
+      } catch (err) {
+        if (!controller.signal.aborted) degradationWebhookError = "读取 Team 控制面事件失败：" + err.message;
+      }
+    }
+    if (loadController === controller && !controller.signal.aborted) {
+      try {
         const status = await api(BASE + "/automation", { signal: controller.signal });
         if (!controller.signal.aborted) acceptAutomation(status);
       } catch (err) {
@@ -501,6 +583,14 @@ function showLogin(message) {
   automationManagement = null;
   automationManagementDirty = false;
   automationManagementError = "";
+  degradationWebhook = null;
+  degradationWebhookDirty = false;
+  degradationWebhookError = "";
+  degradationEvents = [];
+  $("degradation-webhook-enabled").checked = false;
+  $("degradation-webhook-endpoint").value = "";
+  $("degradation-webhook-secret").value = "";
+  $("degradation-webhook-timeout").value = "10";
   $("automation-management-url").value = AUTOMATION_MANAGEMENT_DEFAULT;
   $("automation-management-key").value = "";
   $("automation-model").value = "";

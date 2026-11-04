@@ -58,6 +58,8 @@ const stableID = (kind, parts) => kind + ':' + crypto.createHash('sha256').updat
 (async () => {
   run(`const automationFixture = {config:{enabled:false,model:'',interval_minutes:30,auto_disable:false,credential_ids:[]},running:false,next_run:null,last_started:null,last_finished:null,last_error:'',events:[]}`);
   run(`const managementFixture = {base_url:'http://127.0.0.1:8317',ready:false}`);
+  run(`const degradationFixture = {enabled:false,endpoint:'',timeout_seconds:10,ready:false}`);
+  run(`const degradationEventsFixture = {events:[],storage_error:''}`);
   let finishAPI;
   context.fetch = () => new Promise(resolve => { finishAPI = resolve; });
   run(`key='old-login'`);
@@ -472,6 +474,8 @@ const stableID = (kind, parts) => kind + ':' + crypto.createHash('sha256').updat
     api = async (path, options = {}) => {
       if (path.endsWith('/state')) return JSON.parse(JSON.stringify(statusServer));
       if (path.endsWith('/automation/management')) return managementFixture;
+      if (path.endsWith('/degradation-webhook')) return degradationFixture;
+      if (path.endsWith('/degradation-events')) return degradationEventsFixture;
       if (path.endsWith('/automation')) return automationFixture;
       statusCalls.push([path, options.method, options.body]);
       if (!options.body.disabled) throw new Error('Denied');
@@ -485,7 +489,7 @@ const stableID = (kind, parts) => kind + ':' + crypto.createHash('sha256').updat
   await run(`setCredentialEnabled('valid-state', true)`);
   assert.equal(run(`credentials[0].disabled`), true, 'a rejected change must reload the CPA state');
   assert(element('flash .notice-message').textContent.includes('启用凭证失败：Denied'));
-  run(`let finishStatus; api = (path) => path.endsWith('/automation/management') ? Promise.resolve(managementFixture) : path.endsWith('/automation') ? Promise.resolve(automationFixture) : path.endsWith('/state') ? Promise.resolve(JSON.parse(JSON.stringify(statusServer)))
+  run(`let finishStatus; api = (path) => path.endsWith('/automation/management') ? Promise.resolve(managementFixture) : path.endsWith('/degradation-webhook') ? Promise.resolve(degradationFixture) : path.endsWith('/degradation-events') ? Promise.resolve(degradationEventsFixture) : path.endsWith('/automation') ? Promise.resolve(automationFixture) : path.endsWith('/state') ? Promise.resolve(JSON.parse(JSON.stringify(statusServer)))
     : new Promise(resolve => { finishStatus = () => { statusServer.credentials[0].disabled = false; resolve({status:'ok'}); }; })`);
   const enabling = run(`setCredentialEnabled('valid-state', true)`);
   assert.equal(run(`pending`), false, 'switching one credential must not lock the page');
@@ -640,11 +644,11 @@ const stableID = (kind, parts) => kind + ':' + crypto.createHash('sha256').updat
   assert.equal(element('automation-management-key').value, '');
   assert(!element('flash .notice-message').textContent.includes('synthetic-management-secret'));
   assert.equal(run(`automationManagementDirty`), true);
-  run(`api=async path=>path.endsWith('/automation/management') ? {...managementFixture,ready:true} : path.endsWith('/automation') ? automationFixture : {credentials:[]}`);
+  run(`api=async path=>path.endsWith('/automation/management') ? {...managementFixture,ready:true} : path.endsWith('/degradation-webhook') ? degradationFixture : path.endsWith('/degradation-events') ? degradationEventsFixture : path.endsWith('/automation') ? automationFixture : {credentials:[]}`);
   await run(`load()`);
   assert.equal(run(`automationManagement.ready`), true);
   assert.equal(element('automation-management-url').value, 'http://127.0.0.1:9001');
-  run(`api=async path=>{if(path.endsWith('/automation/management'))throw new Error('private response');return path.endsWith('/automation')?automationFixture:{credentials:[]}}`);
+  run(`api=async path=>{if(path.endsWith('/automation/management'))throw new Error('private response');return path.endsWith('/degradation-webhook')?degradationFixture:path.endsWith('/degradation-events')?degradationEventsFixture:path.endsWith('/automation')?automationFixture:{credentials:[]}}`);
   await run(`load()`);
   assert.equal(element('automation-auto-disable').disabled, true, 'failed readiness refresh fails closed');
   assert(!element('automation-management-error').textContent.includes('private response'));

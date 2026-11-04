@@ -24,6 +24,8 @@ func setupTest(t *testing.T) {
 	previousLoadError, previousStorageError := stateLoadError, storageError
 	previousRecords, previousRunning, previousInspections := records, running, inspections
 	previousRunCtx, previousStopRuns, previousRetryDelay := runCtx, stopRuns, retryDelay
+	previousDegradation, previousDegradationLoaded, previousDegradationError := degradationOutbox, degradationLoaded, degradationLoadError
+	previousDegradationRetry, previousDegradationHTTP := degradationRetryBase, degradationHTTPDo
 	t.Cleanup(func() {
 		Quiesce()
 		tasks.Wait()
@@ -35,6 +37,8 @@ func setupTest(t *testing.T) {
 		stateLoadError, storageError = previousLoadError, previousStorageError
 		records, running, inspections = previousRecords, previousRunning, previousInspections
 		runCtx, stopRuns, retryDelay = previousRunCtx, previousStopRuns, previousRetryDelay
+		degradationOutbox, degradationLoaded, degradationLoadError = previousDegradation, previousDegradationLoaded, previousDegradationError
+		degradationRetryBase, degradationHTTPDo = previousDegradationRetry, previousDegradationHTTP
 	})
 	configuredCredentials = map[string]credential{}
 	automation, automationLoaded, automationLoadError = defaultAutomation(), false, nil
@@ -45,6 +49,8 @@ func setupTest(t *testing.T) {
 	records, running, inspections = emptyState(), map[string]*progress{}, map[string]inspection{}
 	runCtx, stopRuns = context.WithCancel(context.Background())
 	retryDelay = time.Millisecond
+	degradationOutbox, degradationLoaded, degradationLoadError = degradationOutboxState{Events: []degradationOutboxEvent{}}, true, nil
+	degradationRetryBase = time.Millisecond
 	hostCall = func(method string, _ any) (json.RawMessage, error) {
 		t.Errorf("unexpected host call: %s", method)
 		return nil, fmt.Errorf("unexpected host call: %s", method)

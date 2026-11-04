@@ -115,6 +115,20 @@
           <p id="automation-error" class="detail-warning" role="alert" hidden></p>
           <h3>最近巡检结果</h3>
           <div id="automation-results"></div>
+          <h3>Team 控制面事件</h3>
+          <form id="degradation-webhook-form" class="automation-management-card">
+            <div class="section-head"><h4>签名 Webhook</h4><span id="degradation-webhook-dirty" class="meta" hidden>未保存</span></div>
+            <fieldset id="degradation-webhook-fields" class="automation-management-fields">
+              <label class="field"><span class="field-label">接收地址</span><input id="degradation-webhook-endpoint" type="url" autocomplete="off" spellcheck="false" placeholder="https://team-control.example/internal/v1/cpa/degradation-events"></label>
+              <label class="field"><span class="field-label">签名密钥</span><input id="degradation-webhook-secret" type="password" autocomplete="new-password" spellcheck="false" placeholder="留空保留已存密钥"></label>
+              <label class="field"><span class="field-label">超时（秒）</span><input id="degradation-webhook-timeout" type="number" min="1" max="60" step="1" value="10" required></label>
+              <label class="switch"><input id="degradation-webhook-enabled" type="checkbox" role="switch"><span>启用事件投递</span></label>
+            </fieldset>
+            <p class="meta">只发送凭证稳定标识、邮箱、模型判断和哈希版本；不会发送 OAuth、API Key、Prompt 或图片内容。密钥只存于服务端权限 0600 的文件，状态接口不返回。</p>
+            <div class="automation-actions"><button id="degradation-webhook-save" class="btn ghost" type="submit" disabled><i data-icon="check"></i>保存事件连接</button><span id="degradation-webhook-status" class="meta" role="status">未配置</span></div>
+            <p id="degradation-webhook-error" class="detail-warning" role="alert" hidden></p>
+          </form>
+          <div id="degradation-events"></div>
         </section>
       </section>
       <section id="pelican-panel" role="tabpanel" aria-labelledby="tab-pelican" hidden>

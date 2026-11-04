@@ -406,6 +406,13 @@ func applyAutomationResult(ctx context.Context, c automationConfig, generation u
 			e.Status, e.Message = "disable_failed", "CPA 禁用凭证失败，请在凭证列表核对状态"
 		} else {
 			e.Status, e.Message = "disabled", "检测模型不匹配，已禁用此凭证（影响该凭证的所有模型）"
+			confidence := 0.0
+			if e.Probability != nil {
+				confidence = *e.Probability
+			}
+			if err := queueDegradationEvent(auth, c.Model, e.Prediction, confidence, e.Time); err != nil {
+				e.Message += "；控制面事件未入队，请检查事件存储"
+			}
 		}
 	}
 	mu.Lock()
